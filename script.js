@@ -7,6 +7,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const averageTimeDisplay = document.getElementById('averageTime');
     const attemptsDisplay = document.getElementById('attempts');
 
+    // Create an offscreen canvas to force rendering synchronization
+    const renderSyncCanvas = document.createElement('canvas');
+    renderSyncCanvas.width = 1;
+    renderSyncCanvas.height = 1;
+    const renderCtx = renderSyncCanvas.getContext('2d');
+
     // Updated: 4 columns × 3 rows = 12 lights
     const lights = [
         [document.getElementById('light1'), document.getElementById('light5'), document.getElementById('light9')],
@@ -83,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearInterval(lightSequenceInterval);
                 lightsOutTimeout = setTimeout(() => {
                     lightsOut();
-                }, 800 + Math.random() * 700);
+                }, 1500 + Math.random() * 300);
             }
         }, 300);
     }
@@ -97,7 +103,17 @@ document.addEventListener('DOMContentLoaded', () => {
             light.classList.remove('active');
             light.classList.add('go');
         });
-        startTime = new Date().getTime();
+        
+        // Force layout and style recalc before measurement
+        void document.body.offsetHeight;
+        
+        // Force a frame to render the lights off state
+        renderCtx.clearRect(0, 0, 1, 1);
+        
+        // Start timing after the frame is rendered
+        requestAnimationFrame(() => {
+            startTime = performance.now();
+        });
     }
 
     function earlyClick() {
@@ -108,22 +124,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function showCelebrationBanner(text) {
-    const modal = document.getElementById('celebrationModal');
-    const modalText = document.getElementById('celebrationText');
-    const closeBtn = document.getElementById('closeCelebration');
+        const modal = document.getElementById('celebrationModal');
+        const modalText = document.getElementById('celebrationText');
+        const closeBtn = document.getElementById('closeCelebration');
 
-    modalText.innerText = text;
-    modal.classList.remove('hidden');
+        modalText.innerText = text;
+        modal.classList.remove('hidden');
 
-    closeBtn.onclick = () => {
-        modal.classList.add('hidden');
-    };
-}
+        closeBtn.onclick = () => {
+            modal.classList.add('hidden');
+        };
+    }
 
 
     function recordReaction() {
-        const reactionTime = new Date().getTime() - startTime;
-
+        // Get the precise current time
+        const reactionTime = performance.now() - startTime;
+        
+        // Validate reaction time (human reaction can't be less than 50ms)
         if (reactionTime < 50) {
             showJumpStart();
             return;
@@ -149,26 +167,71 @@ document.addEventListener('DOMContentLoaded', () => {
         checkCelebrationProgress(reactionTime);
     }
 
- function checkCelebrationProgress(time) {
-    const attemptNumber = reactionTimes.length;
+    function checkCelebrationProgress(time) {
+        const attemptNumber = reactionTimes.length;
 
-    if (time < 180) {
-        if (!celebration.firstUnder180) {
-            // First sub-180ms trigger
-            celebration.firstUnder180 = attemptNumber;
-            celebration.firstIndex = reactionTimes.length - 1; // index-based
-            celebration.remainingAttempts = 7;
-            celebration.successfulAttempts = [{
-                attemptNumber,
-                time,
-                offset: 0
-            }];
+        if (time < 180) {
+            if (!celebration.firstUnder180) {
+                // First sub-180ms trigger
+                celebration.firstUnder180 = attemptNumber;
+                celebration.firstIndex = reactionTimes.length - 1; // index-based
+                celebration.remainingAttempts = 7;
+                celebration.successfulAttempts = [{
+                    attemptNumber,
+                    time,
+                    offset: 0
+                }];
 
-            showCelebrationBanner(`🔥 Attempt #${attemptNumber}: First sub-180ms!\nYou now have 7 more attempts to get two more.`);
-        } else {
-            // Check if we're still within the 7 following attempts
+                showCelebrationBanner(`🔥 Attempt #${attemptNumber}: First sub-180ms!\nYou now have 7 more attempts to get two more.`);
+            } else {
+                // Check if we're still within the 7 following attempts
+                const offset = (reactionTimes.length - 1) - celebration.firstIndex;
+                if (offset > 7) {
+                    showCelebrationBanner("❌ Challenge failed. You used all 7 attempts. Progress reset.");
+                    celebration = {
+                        firstUnder180: null,
+                        firstIndex: null,
+                        remainingAttempts: 0,
+                        successfulAttempts: []
+                    };
+                } else {
+                    celebration.successfulAttempts.push({
+                        attemptNumber,
+                        time,
+                        offset
+                    });
+                    celebration.remainingAttempts--;
+
+                    if (celebration.successfulAttempts.length >= 3) {
+                        const [first, second, third] = celebration.successfulAttempts;
+                        const totalSpan = third.attemptNumber - first.attemptNumber;
+
+                        showCelebrationBanner(
+                           `🎉 You're featured!\n` +
+    `✅ Attempt #${first.attemptNumber}-0 → ${formatTime(first.time)}s\n` +
+    `✅ Attempt #${second.attemptNumber}-${second.offset} → ${formatTime(second.time)}s\n` +
+    `✅ Attempt #${third.attemptNumber}-${third.offset} → ${formatTime(third.time)}s\n\n` +
+    `🏁 Completed in ${totalSpan} attempts after the first.\n📩 Send a screenshot to be featured!`
+                        );
+
+                        // Reset after success
+                        celebration = {
+                            firstUnder180: null,
+                            firstIndex: null,
+                            remainingAttempts: 0,
+                            successfulAttempts: []
+                        };
+                    } else {
+                       
+                        const latest = celebration.successfulAttempts[celebration.successfulAttempts.length - 1];
+                        showCelebrationBanner(`✅ Sub-180ms (#${latest.attemptNumber}-${latest.offset}, ${formatTime(latest.time)}s)\n${celebration.successfulAttempts.length}/3 done. ${celebration.remainingAttempts} left.`);
+                    }
+                }
+            }
+        } else if (celebration.firstUnder180) {
+            // Not a sub-180 but within 7 attempts
             const offset = (reactionTimes.length - 1) - celebration.firstIndex;
-            if (offset > 7) {
+            if (offset >= 7) {
                 showCelebrationBanner("❌ Challenge failed. You used all 7 attempts. Progress reset.");
                 celebration = {
                     firstUnder180: null,
@@ -177,56 +240,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     successfulAttempts: []
                 };
             } else {
-                celebration.successfulAttempts.push({
-                    attemptNumber,
-                    time,
-                    offset
-                });
                 celebration.remainingAttempts--;
-
-                if (celebration.successfulAttempts.length >= 3) {
-                    const [first, second, third] = celebration.successfulAttempts;
-                    const totalSpan = third.attemptNumber - first.attemptNumber;
-
-                    showCelebrationBanner(
-                        `🎉 You're featured!\n` +
-                        `✅ Attempt #${first.attemptNumber}-0 → ${first.time}ms\n` +
-                        `✅ Attempt #${second.attemptNumber}-${second.offset} → ${second.time}ms\n` +
-                        `✅ Attempt #${third.attemptNumber}-${third.offset} → ${third.time}ms\n\n` +
-                        `🏁 Completed in ${totalSpan} attempts after the first.\n📩 Send a screenshot to be featured!`
-                    );
-
-                    // Reset after success
-                    celebration = {
-                        firstUnder180: null,
-                        firstIndex: null,
-                        remainingAttempts: 0,
-                        successfulAttempts: []
-                    };
-                } else {
-                    const latest = celebration.successfulAttempts[celebration.successfulAttempts.length - 1];
-                    showCelebrationBanner(`✅ Sub-180ms (#${latest.attemptNumber}-${latest.offset}, ${latest.time}ms)\n${celebration.successfulAttempts.length}/3 done. ${celebration.remainingAttempts} left.`);
-                }
             }
         }
-    } else if (celebration.firstUnder180) {
-        // Not a sub-180 but within 7 attempts
-        const offset = (reactionTimes.length - 1) - celebration.firstIndex;
-        if (offset >= 7) {
-            showCelebrationBanner("❌ Challenge failed. You used all 7 attempts. Progress reset.");
-            celebration = {
-                firstUnder180: null,
-                firstIndex: null,
-                remainingAttempts: 0,
-                successfulAttempts: []
-            };
-        } else {
-            celebration.remainingAttempts--;
-        }
-    }
 
-    localStorage.setItem('celebration', JSON.stringify(celebration));
-}
+        localStorage.setItem('celebration', JSON.stringify(celebration));
+    }
 
 
     function getPerformanceCategory(timeMs) {
@@ -336,4 +355,9 @@ document.addEventListener('DOMContentLoaded', () => {
         lastTaglineIndex[type] = newIndex;
         tagline.textContent = lines[newIndex];
     }
+    
+   
+
+
+ 
 });
